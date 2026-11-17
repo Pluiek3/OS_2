@@ -1,0 +1,229 @@
+\textbf{Задание №1-7} Теоретические сведения.\label{sec:1}
+
+\begin{enumerate}
+
+\item \textbf{Виртуальная память} — механизм, предоставляющий каждому процессу
+иллюзию непрерывного изолированного адресного пространства, отображая
+виртуальные адреса в физическую память и подкачку на диск через таблицы
+страниц.
+
+\textbf{Назначение:}
+\begin{enumerate}
+    \item абстракция над физической памятью;
+    \item изоляция процессов друг от друга;
+    \item защита данных;
+    \item возможность запускать программы больше объёма RAM;
+    \item упрощение управления памятью для приложений.
+\end{enumerate}
+
+\textbf{Отличие от физической памяти:}
+физическая память — реальные микросхемы RAM с фиксированными адресами;
+виртуальная — иллюзия, где каждый процесс видит своё пространство, а MMU
+преобразует виртуальные адреса в физические.
+
+
+\item Механизмы отображения адресов \label{sec:2}
+
+\textbf{MMU} (Memory Management Unit) — аппаратный блок процессора,
+преобразующий виртуальные адреса в физические через таблицы страниц и
+проверяющий права доступа.
+
+\textbf{Таблицы страниц x86-64 (4 уровня):}
+\begin{enumerate}
+    \item \textbf{PML4} — Page Map Level 4 (биты 39--47);
+    \item \textbf{PDPT} — Page Directory Pointer Table (биты 30--38);
+    \item \textbf{PD} — Page Directory (биты 21--29);
+    \item \textbf{PT} — Page Table (биты 12--20);
+    \item \textbf{offset} — смещение внутри страницы (биты 0--11).
+\end{enumerate}
+
+\textbf{LA57} — пятиуровневая адресация с дополнительным PML5
+(биты 48--56), расширяет пространство до 128~ПБ.
+
+\textbf{Страница} — минимальная единица (обычно 4~КБ). Размер:
+\texttt{getconf PAGE\_SIZE}.
+
+\textbf{TLB} (Translation Lookaside Buffer) — кэш последних трансляций
+<<виртуальный~\(\to\)~физический>>. TLB miss вызывает page table walk,
+но \emph{не} является page fault.
+
+
+\item Адресное пространство процесса \label{sec:3}
+
+\begin{enumerate}
+    \item \texttt{.text} — машинные инструкции, права \texttt{r-x};
+    \item \texttt{.data} — инициализированные глобальные/статические;
+    \item \texttt{.bss} — неинициализированные глобальные/статические (нули);
+    \item \texttt{heap} — динамическая память (\texttt{malloc}, \texttt{brk}), растёт вверх;
+    \item \texttt{mmap} — отображаемые файлы и разделяемые библиотеки;
+    \item \texttt{stack} — локальные переменные, параметры, адреса возврата, растёт вниз.
+\end{enumerate}
+
+\item Системные вызовы управления памятью \label{sec:4}
+
+\begin{enumerate}
+
+\item \texttt{mmap()}, \texttt{munmap()}
+
+\texttt{mmap(addr, length, prot, flags, fd, offset)} — создаёт отображение
+файла или анонимной памяти в адресное пространство процесса. Страницы
+подгружаются по требованию (\emph{demand paging}).
+
+\textbf{Флаги:}
+\begin{enumerate}
+    \item \texttt{MAP\_ANONYMOUS} — анонимное отображение (без файла);
+    \item \texttt{MAP\_PRIVATE} — частное, с семантикой COW;
+    \item \texttt{MAP\_SHARED} — общее, изменения видны другим процессам.
+\end{enumerate}
+
+\texttt{munmap(addr, length)} — удаляет отображение; адрес должен быть
+выровнен по странице.
+
+\item \texttt{mlock()}, \texttt{munlock()}, \texttt{mlockall()}, \texttt{munlockall()}
+
+\texttt{mlock(addr, len)} — фиксирует страницы в RAM, запрещая выгрузку в
+swap. Применяется в real-time приложениях и для криптографических ключей.
+
+\texttt{munlock()} — снимает фиксацию; \texttt{mlockall(MCL\_CURRENT)} —
+для всего адресного пространства.
+
+\item \texttt{mprotect()}
+
+\texttt{mprotect(addr, len, prot)} — изменяет права доступа к страницам:
+\texttt{PROT\_READ}, \texttt{PROT\_WRITE}, \texttt{PROT\_EXEC},
+\texttt{PROT\_NONE}.
+
+\texttt{PROT\_NONE} используется для \emph{guard pages} — обращение к ним
+приводит к \texttt{SIGSEGV}.
+
+\item \texttt{madvise()}, \texttt{posix\_madvise()}
+
+\texttt{madvise(addr, len, advice)} — передаёт ядру советы по работе с
+диапазоном:
+\begin{enumerate}
+    \item \texttt{MADV\_SEQUENTIAL} — ожидается последовательный доступ;
+    \item \texttt{MADV\_RANDOM} — случайный доступ, readahead не нужен;
+    \item \texttt{MADV\_WILLNEED} — диапазон скоро потребуется;
+    \item \texttt{MADV\_DONTNEED} — диапазон пока не нужен;
+    \item \texttt{MADV\_HUGEPAGE} / \texttt{MADV\_NOHUGEPAGE} — THP;
+    \item \texttt{MADV\_MERGEABLE} — пометить для KSM.
+\end{enumerate}
+
+\texttt{posix\_madvise()} — POSIX-аналог с другим набором констант.
+\end{enumerate}
+
+\item \texttt{malloc()} и системные вызовы \label{sec:5}
+
+\texttt{malloc}, \texttt{calloc}, \texttt{realloc}, \texttt{free} — функции
+\emph{пользовательского аллокатора} (glibc), а не системные вызовы.
+
+\begin{enumerate}
+    \item небольшие блоки — из внутреннего пула через \texttt{brk()}/\texttt{sbrk()};
+    \item крупные (\(> \texttt{MMAP\_THRESHOLD}\), обычно 128~КБ) — через \texttt{mmap()};
+    \item \texttt{free()} не возвращает память ядру сразу — блок остаётся в пуле.
+\end{enumerate}
+
+
+\item Механизмы работы ядра с памятью \label{sec:6}
+
+\begin{enumerate}
+
+\item Copy-on-Write (COW)
+
+После \texttt{fork()} родитель и потомок разделяют физические страницы
+(\emph{read-only}). При записи возникает page fault, ядро копирует
+страницу только пишущему процессу.
+
+COW также применяется в \texttt{mmap}, снапшотах, контейнерах, VM, KSM.
+
+\item Подкачка (swap)
+
+Swap — область на диске для временного хранения неактивных
+\emph{анонимных} страниц.
+
+\begin{enumerate}
+    \item \textbf{swap out} — RAM \(\to\) swap;
+    \item \textbf{swap in} — swap \(\to\) RAM.
+\end{enumerate}
+
+Параметр \texttt{vm.swappiness} (\(\sim\)60 по умолчанию) влияет на
+склонность к вытеснению анонимных страниц.
+
+\item Кэш страниц (page cache)
+
+Page cache — кэш содержимого файлов в RAM. \texttt{read()} и файловый
+\texttt{mmap()} используют одни и те же страницы.
+
+\begin{enumerate}
+    \item \textbf{cold cache} — требуется реальный I/O;
+    \item \textbf{warm cache} — данные уже в RAM.
+\end{enumerate}
+
+Writeback — асинхронная запись <<грязных>> страниц; \texttt{msync()} —
+принудительная синхронизация.
+
+\item Page fault
+
+\begin{enumerate}
+    \item \textbf{minor} — страница уже в RAM, нужно обновить PTE;
+    \item \textbf{major} — требуется дисковый I/O (файл или swap);
+    \item \textbf{SIGSEGV} — ядро не может законно разрешить обращение.
+\end{enumerate}
+
+\textbf{Нормальные причины:} demand paging, COW, подключение страницы,
+уже находящейся в RAM.
+\end{enumerate}
+
+
+\item Консольные инструменты \label{sec:7}
+
+\begin{enumerate}
+
+\item \texttt{free}
+
+\texttt{free -h} — обзор использования RAM и swap.
+
+\item \texttt{vmstat}
+
+\texttt{vmstat 1} — динамика памяти, подкачки (\texttt{si}/\texttt{so}),
+CPU и I/O.
+
+\item \texttt{top} / \texttt{htop}
+
+Интерактивный мониторинг процессов и их памяти (RSS, VSZ, CPU).
+
+\item \texttt{/proc/[PID]/maps} и \texttt{/proc/[PID]/smaps}
+
+\texttt{maps} — карта VMA (адреса, права, offset, inode, файл).
+\texttt{smaps} — то же плюс RSS, PSS, Private\_Dirty, Shared\_Dirty.
+
+\item \texttt{/proc/meminfo}
+
+Сводная информация: MemTotal, MemFree, Buffers, Cached, SwapTotal,
+Committed\_AS, CommitLimit.
+
+\item \texttt{pmap}
+
+\texttt{pmap -X <PID>} — наглядное отображение карт памяти процесса.
+
+\end{enumerate}
+
+\item Сводная таблица
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Инструмент / вызов} & \textbf{Назначение} \\
+\hline
+\texttt{getconf PAGE\_SIZE}    & размер страницы \\
+\texttt{/proc/<PID>/maps}      & VMA процесса \\
+\texttt{/proc/<PID>/smaps}     & RSS, PSS, Dirty по VMA \\
+\texttt{/proc/<PID>/status}    & VmSize, VmRSS, VmSwap \\
+\texttt{/proc/meminfo}         & общая статистика памяти \\
+\texttt{/proc/vmstat}          & pgfault, pgmajfault, pswpin/out \\
+\texttt{ps -o min\_flt,maj\_flt} & page faults процесса \\
+\texttt{perf stat -e \ldots}   & dTLB, cache, faults \\
+\hline
+\end{tabular}
+\end{center}
+\end{enumerate}
